@@ -1,0 +1,107 @@
+---
+title: "Results: Round 1"
+format:
+  su-theme-revealjs:
+    embed-resources: true
+    chalkboard: false
+footer: "Elicitation workshop 2025-07-02"
+
+---
+
+
+```{r, echo = FALSE}
+# Read results
+no_teams <- readr::read_csv("results.csv") |>
+dplyr::filter(which_phase == 1) |>
+dplyr::filter(
+          !(.data[["low_0_5"]] == 0 &
+            .data[["low_6_10"]] == 0 &
+            .data[["high_0_5"]] == 0 &
+            .data[["high_6_10"]] == 0)
+        )  # Remove any values left at default
+
+# Create lookup
+lookup <- readr::read_csv("lookup.csv")
+#readxl::read_excel("recruitment.xlsx") |>
+#    janitor::clean_names() |> 
+#    dplyr::mutate(hash_email = purrr::map_chr(email, hash_email)) |>
+#    dplyr::select(hash_email, team)
+
+# Combine
+round_1 <- dplyr::left_join(no_teams, lookup, by = c("email" = "hash_email")) |>
+dplyr::select(tidyselect::matches("low|high"), team)
+
+```
+
+```{r}
+round_1 |>
+reactable::reactable(style = list(fontSize = "11px"),  
+  width = "100%",
+  compact = TRUE,
+  height = 700,
+  defaultPageSize = nrow(round_1), 
+  columns = list(
+            low_0_5 = reactable::colDef(name = "Low (0–5 yrs)", width = 50),
+            low_6_10 = reactable::colDef(name = "Low (6–10 yrs)", width = 50),
+            low_avg = reactable::colDef(
+              name = "Low (10-yr avg)",
+              style = list(fontWeight = "bold"), width = 50
+            ),
+            high_0_5 = reactable::colDef(name = "High (0–5 yrs)", width = 50),
+            high_6_10 = reactable::colDef(name = "High (6–10 yrs)", width = 50),
+            high_avg = reactable::colDef(
+              name = "High (10-yr avg)",
+              style = list(fontWeight = "bold", width = 50)
+            ),
+            comments_low = reactable::colDef(name = "Low rationale", width = 300),
+            comments_high = reactable::colDef(name = "High rationale", width = 300),
+            team = reactable::colDef(name = "Team", width = 50)
+          )  
+)
+```
+---
+
+
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+#| out-width: "100%"
+#| out-height: "100%"
+round_1 |>
+        dplyr::arrange(.data[["low_avg"]], .data[["high_avg"]]) |>
+        dplyr::mutate(rn = dplyr::row_number()) |>
+        ggplot2::ggplot(
+          ggplot2::aes(y = .data[["rn"]], fill = .data[["team"]], colour = .data[["team"]])
+        ) +
+    ggplot2::geom_point(
+      ggplot2::aes(
+        x = .data[["low_avg"]],
+        text = .data[["comments_low"]]
+      ),
+      size = 3,
+      show.legend = FALSE
+    ) +
+       ggplot2::geom_point(
+      ggplot2::aes(
+        x = .data[["high_avg"]],
+        text = .data[["comments_high"]]
+      ),
+      size = 3,
+      show.legend = FALSE
+    ) +
+    ggplot2::geom_segment(
+      ggplot2::aes(
+        x = .data[["low_avg"]],
+        xend = .data[["high_avg"]],
+        yend = .data[["rn"]]
+      ),
+      lwd = 1.5,
+    ) +
+        ggplot2::theme_minimal(base_size = 16) +
+         ggplot2::theme(axis.text.y = ggplot2::element_blank()) +
+ggplot2::ylab("") +
+ggplot2::xlab("") + 
+StrategyUnitTheme::scale_color_su()
+```
+
+
