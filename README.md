@@ -1,11 +1,11 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# NEECOM elicitation app
+# Productivity elicitation app (The Health Foundation)
 
 This repo contains the shiny app code for an elicitation on Productivity
 for The Health Foundation. The exercise was run in person at a workshop
-on July 2024. Participants were split into three teams; research, policy
+on July 2025. Participants were split into three teams; research, policy
 and front line.
 
 The aggregation and analysis of the results, including presentions shown
@@ -71,3 +71,4 @@ order to get this to work.
 
 3)  you will need a copy of the file `recruitment.xlsx`, stored in the
     root of the project folder.
+
