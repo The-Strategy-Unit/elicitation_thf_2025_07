@@ -18,7 +18,7 @@ mod_view_results_server <- function(id) {
     })
 
     output$download_results <- shiny::downloadHandler(
-      file = "results.csv",
+      "results.csv",
       content = \(filename) {
         readr::write_csv(all_data(), filename)
       }
@@ -52,8 +52,15 @@ mod_view_results_server <- function(id) {
     results_data <- shiny::reactive({
       all_data() |>
         dplyr::filter(.data[["strategy"]] == input$strategy) |>
-        dplyr::select("lo", "hi") |>
-        dplyr::arrange(.data[["lo"]], .data[["hi"]]) |>
+        dplyr::select(
+          #"low_0_5",
+          #"low_5_10",
+          "low_avg",
+          #"high_0_5",
+          #"high_5_10",
+          "high_avg"
+        ) |>
+        dplyr::arrange(.data[["low_avg"]], .data[["high_avg"]]) |>
         dplyr::mutate(rn = dplyr::row_number())
     }) |>
       shiny::bindEvent(input$strategy)
@@ -82,16 +89,18 @@ mod_view_results_server <- function(id) {
     output$individuals <- shiny::renderPlot({
       results_data() |>
         ggplot2::ggplot(
-          ggplot2::aes(x = .data[["lo"]], y = .data[["rn"]])
+          ggplot2::aes(x = .data[["low_avg"]], y = .data[["rn"]])
         ) +
         ggplot2::geom_segment(
-          ggplot2::aes(xend = .data[["hi"]], yend = .data[["rn"]])
+          ggplot2::aes(xend = .data[["high_avg"]], yend = .data[["rn"]]),
+          lwd = 2
         ) +
         ggplot2::geom_point(
           data = \(.x) tidyr::pivot_longer(.x, -"rn"),
-          ggplot2::aes(x = .data[["value"]])
+          ggplot2::aes(x = .data[["value"]]),
+          size = 4
         ) +
-        ggplot2::theme_minimal() +
+        ggplot2::theme_minimal(base_size = 16) +
         ggplot2::theme(
           axis.text.y = ggplot2::element_blank(),
           axis.title = ggplot2::element_blank(),

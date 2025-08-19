@@ -7,36 +7,18 @@ mod_mitigator_server <- function(id, email, strategies) {
     .data <- rlang::.data
 
     # load the data
-    trend_data <- app_sys("app", "data", "trend_data.csv") |>
-      readr::read_csv(col_types = "dcddd")
+    hist_data <- app_sys("app", "data", "hist_data.csv") |>
+      readr::read_csv()
 
-    # keep track of the minimum year in the data, so we always show the same
-    # range on the x-axis
-    min_year <- min(trend_data$year)
+    cagr_data <- app_sys("app", "data", "cagr_data.csv") |>
+      readr::read_csv()
 
-    # admin stuff --------------------------------------------------------------
-    shiny::observe({
-      is_local <- Sys.getenv("SHINY_PORT") == ""
+    long_term_avg <- cagr_data |>
+      dplyr::filter(Metric == "Long-term CAGR avg") |>
+      dplyr::pull("Including Covid (1995/96 to present)")
 
-      if (!is_local) {
-        shiny::req(session$user)
-      }
-
-      shinyjs::show("change_strat")
-
-      s <- purrr::map(strategies(), "name")
-
-      shiny::updateSelectInput(
-        session,
-        "change_strat",
-        choices = purrr::set_names(names(s), unname(s))
-      )
-    })
-
-    shiny::observe({
-      s <- shiny::req(input$change_strat)
-      selected_strategy(which(s == names(strategies())))
-    })
+    disc_data <- app_sys("app", "data", "disc_data.csv") |>
+      readr::read_csv()
 
     # reactives ----------------------------------------------------------------
 
@@ -47,22 +29,11 @@ mod_mitigator_server <- function(id, email, strategies) {
     # have been visited, and is used to show/hide the complete button
     has_visited_all_strategies <- shiny::reactiveVal()
 
-    # when the selected_strategy changes, get the name to display in the title
-    selected_strategy_text <- shiny::reactive({
-      s <- selected_strategy()
-      strategies()[[s]]$name
-    })
-
     # when the selected_strategy changes, get the id of the strategy to use
     # for selecting data
     selected_strategy_id <- shiny::reactive({
       s <- selected_strategy()
       names(strategies())[[s]]
-    })
-
-    selected_strategy_min_year <- shiny::reactive({
-      s <- selected_strategy()
-      strategies()[[s]]$min_year %||% min_year
     })
 
     # when the selected_strategy changes, get the "group" to use for loading
@@ -72,61 +43,6 @@ mod_mitigator_server <- function(id, email, strategies) {
       selected_strategy_id() |>
         shiny::req() |>
         stringr::str_remove("-.*$")
-    })
-
-    # when the selected strategy changes, subset the data for that strategy
-    selected_data <- shiny::reactive({
-      dplyr::filter(
-        trend_data,
-        .data[["strategy"]] == selected_strategy_id(),
-        .data[["year"]] >= selected_strategy_min_year()
-      )
-    })
-
-    # for charts that show a rate per N admissions, figure out what scale to
-    # use for N. for all othe charts, the scale is 1.
-    selected_data_scale <- shiny::reactive({
-      s <- selected_strategy()
-      if (!strategies()[[s]]$label |> stringr::str_detect("\\{n\\}")) {
-        return(1)
-      }
-      v <- mean(selected_data()$rate)
-      10^round(1 - log10(v))
-    })
-
-    # choose the format to use for the y-axis values in the chart. if the
-    # y-axis label contains a % character, then format as a percentage.
-    # otherwise, format as a number using the scale determined by
-    # selected_data_scale
-    value_format <- shiny::reactive({
-      s <- selected_strategy()
-      if (strategies()[[s]]$label |> stringr::str_detect("\\%")) {
-        return(scales::percent_format(accuracy = 0.1))
-      }
-
-      scales::number_format(accuracy = 0.1, scale = selected_data_scale())
-    })
-
-    # get the title to use for the y-axis
-    y_axis_title <- shiny::reactive({
-      s <- selected_strategy()
-      n <- scales::comma(selected_data_scale())
-      glue::glue(strategies()[[s]]$label)
-    })
-
-    # for the chart, figure out what the future values are to display on the
-    # chart as the yellow highlighted area
-    param_table <- shiny::reactive({
-      last_year <- selected_data() |>
-        dplyr::slice_tail(n = 1)
-
-      p <- 1 - input$param_values / 100
-
-      tibble::tibble(
-        year = last_year$year + c(0, 2020),
-        value_lo = last_year$rate * c(1, p[[1]]),
-        value_hi = last_year$rate * c(1, p[[2]])
-      )
     })
 
     # observers ----------------------------------------------------------------
@@ -159,6 +75,55 @@ mod_mitigator_server <- function(id, email, strategies) {
       }
     })
 
+    # Validation
+
+    high_avg <- shiny::reactive({
+      shiny::req(valid_inputs())
+      ((((1 + input$high_0_5 / 100)^5 * (1 + input$high_5_10 / 100)^5)^(1 /
+        10) -
+        1) *
+        100) |>
+        round(1)
+    })
+
+    output$high_avg <- shiny::renderText({
+      paste0(high_avg(), "%")
+    })
+
+    low_avg <- shiny::reactive({
+      shiny::req(valid_inputs())
+      ((((1 + input$low_0_5 / 100)^5 * (1 + input$low_5_10 / 100)^5)^(1 / 10) -
+        1) *
+        100) |>
+        round(1)
+    })
+
+    output$low_avg <- shiny::renderText({
+      paste0(low_avg(), "%")
+    })
+
+    proj <- reactive({
+      shiny::req(valid_inputs())
+      years <- 2025:2034
+      data.frame(
+        Year = years,
+        Low = c(rep(input$low_0_5, 5), rep(input$low_5_10, 5)),
+        High = c(rep(input$high_0_5, 5), rep(input$high_5_10, 5))
+      )
+    })
+
+    output$cagr_table <- shiny::renderTable(
+      cagr_data
+    )
+
+    output$index_plot <- plotly::renderPlotly({
+      index_plot(hist_data, disc_data, proj())
+    })
+
+    output$growth_plot <- plotly::renderPlotly({
+      growth_plot(hist_data, disc_data, proj(), long_term_avg = long_term_avg)
+    })
+
     # update the progress bar when the selected strategy changes
     # it indicates the % through based on the currently selected strategy, so
     # it will decrement when the user presses the previous button
@@ -166,16 +131,71 @@ mod_mitigator_server <- function(id, email, strategies) {
       s <- selected_strategy()
       n <- length(strategies())
 
-      shinyWidgets::updateProgressBar(session, "progress", s - 1, n)
+      shinyWidgets::updateProgressBar(session, "progress", s, n)
     })
 
+    # Validation
+
+    valid_inputs <- reactive({
+      is_valid_number(input$low_0_5) &
+        is_valid_number(input$low_5_10) &
+        is_valid_number(input$high_0_5) &
+        is_valid_number(input$high_5_10) &
+        (input$high_5_10 >= input$low_5_10) &
+        (input$high_0_5 >= input$low_0_5)
+    })
+
+    output$validation_status <- shiny::renderText({
+      text <- ifelse(
+        !valid_inputs(),
+        "Please enter a numeric value for all estimates. Your surprisingly low estimate must be lower than your surprisingly high estimate for each time period.",
+        ""
+      )
+      text
+    })
+
+    # Enforce rounding to 1dp
+
+    shiny::observeEvent(input$low_0_5, {
+      shiny::req(valid_inputs())
+      rounded_val <- round(input$low_0_5, 1)
+      if (rounded_val != input$low_0_5) {
+        shiny::updateNumericInput(session, "low_0_5", value = rounded_val)
+      }
+    })
+
+    shiny::observeEvent(input$high_0_5, {
+      shiny::req(valid_inputs())
+      rounded_val <- round(input$high_0_5, 1)
+      if (rounded_val != input$high_0_5) {
+        shiny::updateNumericInput(session, "high_0_5", value = rounded_val)
+      }
+    })
+
+    shiny::observeEvent(input$low_5_10, {
+      shiny::req(valid_inputs())
+      rounded_val <- round(input$low_5_10, 1)
+      if (rounded_val != input$low_5_10) {
+        shiny::updateNumericInput(session, "low_5_10", value = rounded_val)
+      }
+    })
+
+    shiny::observeEvent(input$high_5_10, {
+      shiny::req(valid_inputs())
+      rounded_val <- round(input$high_5_10, 1)
+      if (rounded_val != input$high_5_10) {
+        shiny::updateNumericInput(session, "high_5_10", value = rounded_val)
+      }
+    })
+
+    #TODO
     # when the selected strategy is changed, get the data from the db and
     # update the inputs, or use default values if the user has not yet saved
     # anything for this strategy
     shiny::observe({
+      shiny::req(valid_inputs())
       e <- email()
       s <- selected_strategy_id()
-
       v <- get_latest_results(e, s)
 
       # if no rows of data are returned, then the user has not yet saved
@@ -183,10 +203,14 @@ mod_mitigator_server <- function(id, email, strategies) {
       v <- if (nrow(v) == 0) {
         if (is_phase_1()) {
           list(
-            lo = 0,
-            hi = 100,
-            comments_lo = "",
-            comments_hi = ""
+            low_0_5 = 0,
+            low_5_10 = 0,
+            low_avg = 0,
+            high_0_5 = 0,
+            high_5_10 = 0,
+            high_avg = 0,
+            comments_low = "",
+            comments_high = ""
           )
         } else {
           v <- as.list(get_latest_results(e, s, TRUE))
@@ -195,16 +219,42 @@ mod_mitigator_server <- function(id, email, strategies) {
         as.list(v)
       }
 
-      shinyWidgets::updateNoUiSliderInput(
+      shiny::updateNumericInput(
         session,
-        "param_values",
-        value = c(v$lo, v$hi)
+        "low_0_5",
+        value = v$low_0_5
       )
 
-      shiny::updateTextAreaInput(session, "why_lo", value = v$comments_lo)
-      shiny::updateTextAreaInput(session, "why_hi", value = v$comments_hi)
+      shiny::updateNumericInput(
+        session,
+        "low_5_10",
+        value = v$low_5_10
+      )
+
+      shiny::updateNumericInput(
+        session,
+        "high_0_5",
+        value = v$high_0_5
+      )
+
+      shiny::updateNumericInput(
+        session,
+        "high_5_10",
+        value = v$high_5_10
+      )
+
+      shiny::updateTextAreaInput(
+        session,
+        "comments_low",
+        value = v$comments_low
+      )
+      shiny::updateTextAreaInput(
+        session,
+        "comments_high",
+        value = v$comments_high
+      )
     }) |>
-      shiny::bindEvent(selected_strategy_id())
+      shiny::bindEvent(selected_strategy_id(), strategies())
 
     # handle the next/previous buttons
     # in both cases, these call the `button_pressed` helper with a value that
@@ -235,9 +285,14 @@ mod_mitigator_server <- function(id, email, strategies) {
         insert_data(
           email(),
           s,
-          input$param_values,
-          input$why_lo,
-          input$why_hi
+          input$low_0_5,
+          input$low_5_10,
+          low_avg(),
+          input$high_0_5,
+          input$high_5_10,
+          high_avg(),
+          input$comments_low,
+          input$comments_high
         )
       )
     }
@@ -299,8 +354,8 @@ mod_mitigator_server <- function(id, email, strategies) {
     # output renderers ---------------------------------------------------------
 
     # the title displayed at the top of the page
-    output$strategy <- shiny::renderUI({
-      shiny::tags$h2(selected_strategy_text())
+    output$strategy <- shiny::renderText({
+      strategies()[[selected_strategy()]]$name
     })
 
     # the box next to the chart which shows the text describing the selected
@@ -311,27 +366,6 @@ mod_mitigator_server <- function(id, email, strategies) {
       md_file_to_html("app", "mitigators_text", paste0(s, ".md"))
     })
 
-    # the main plot that shows the trend data and the selected range of values
-    output$trend_plot <- plotly::renderPlotly({
-      # ggplot throws a warning about an unknown aesthetic, because we override
-      # the plotly tooltip.
-      p <- suppressWarnings(
-        mitigator_trend_plot(
-          selected_data(),
-          param_table(),
-          value_format(),
-          min_year,
-          y_axis_title()
-        )
-      )
-
-      plotly::ggplotly(p, tooltip = "text") |>
-        plotly::config(
-          displayModeBar = FALSE,
-          displaylogo = FALSE
-        )
-    })
-
     if (!is_phase_1()) {
       output$results_plot <- plotly::renderPlotly({
         p <- suppressWarnings(
@@ -340,18 +374,66 @@ mod_mitigator_server <- function(id, email, strategies) {
               phase_1 = TRUE,
               strategy = selected_strategy_id()
             ),
-            input$param_values,
+            values = list(low_avg(), high_avg()), # input$param_values,
             email()
           )
         )
 
         plotly::ggplotly(p, tooltip = "text") |>
+          plotly::style(hoverinfo = "none", traces = 2) |>
           plotly::config(
             displayModeBar = FALSE,
             displaylogo = FALSE
           )
       })
     }
+
+    output$results_table <- reactable::renderReactable({
+      mitigator_results_table(
+        get_all_users_results(
+          phase_1 = TRUE,
+          strategy = selected_strategy_id()
+        ),
+        values = list(low_avg(), high_avg()), # input$param_values,
+        email()
+      ) |>
+        reactable::reactable(
+          columns = list(
+            low_0_5 = reactable::colDef(name = "Low CAGR 0-5 years"),
+            low_5_10 = reactable::colDef(name = "Low CAGR 5-10 years"),
+            low_avg = reactable::colDef(
+              name = "Low CAGR 0-10 years (derived)",
+              style = list(fontWeight = "bold")
+            ),
+            high_0_5 = reactable::colDef(name = "High CAGR 0-5 years"),
+            high_5_10 = reactable::colDef(name = "High CAGR 5-10 years"),
+            high_avg = reactable::colDef(
+              name = "High CAGR 0-10 years (derived)",
+              style = list(fontWeight = "bold")
+            ),
+            comments_low = reactable::colDef(
+              name = "Low rationale",
+              minWidth = 350
+            ),
+            comments_high = reactable::colDef(
+              name = "High rationale",
+              minWidth = 350
+            ),
+            is_me = reactable::colDef(show = FALSE)
+          ),
+          rowStyle = reactable::JS(
+            "
+          function(rowInfo) {
+            if (rowInfo.row.is_me) {
+              return { backgroundColor: '#5881c1', color: '#ffffff' }
+            } else {
+              return { backgroundColor: '#ffffff', color: '#000000' }
+            }
+          }
+        "
+          )
+        )
+    })
 
     # return -------------------------------------------------------------------
     # no need to return anything from this module

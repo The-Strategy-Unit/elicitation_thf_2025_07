@@ -1,99 +1,21 @@
-mitigator_trend_plot <- function(data, param_table, value_format, min_year, y_title) {
-  .data <- rlang::.data # suppress lintr warnings
-
-  fyear_format <- scales::number_format(
-    decimal.mark = "/",
-    big.mark = "",
-    accuracy = 0.01,
-    scale = 0.01
-  )
-
+mitigator_results_table <- function(data, values, email) {
   data |>
-    ggplot2::ggplot(
-      ggplot2::aes(x = .data[["year"]]),
-    ) +
-    ggplot2::annotate(
-      "ribbon",
-      x = param_table$year,
-      ymin = param_table$value_lo[[1]] * c(1, 0),
-      ymax = param_table$value_lo[[1]] * c(1, 1),
-      fill = "#2c2825",
-      alpha = 0.05
-    ) +
-    ggplot2::geom_line(
-      ggplot2::aes(y = .data[["rate"]]),
-      colour = "#2c2825"
-    ) +
-    ggplot2::geom_ribbon(
-      data = param_table,
-      ggplot2::aes(
-        ymin = .data[["value_lo"]],
-        ymax = .data[["value_hi"]]
-      ),
-      fill = "#fcdf83",
-      colour = "#2c2825"
-    ) +
-    ggplot2::geom_point(
-      ggplot2::aes(
-        y = .data[["rate"]],
-        text = glue::glue(
-          "Year: {fyear_format(year)}\n",
-          "Value: {value_format(rate)}\n",
-          "N: {scales::comma(n)}"
-        )
-      ),
-      shape = "circle filled",
-      fill = "#686f73",
-      colour = "#2c2825",
-      size = 3
-    ) +
-    ggplot2::scale_x_continuous(
-      breaks = c(min_year, param_table$year),
-      labels = fyear_format,
-      expand = ggplot2::expansion(c(0.05, 0)),
-      limits = c(min_year, param_table$year[[2]])
-    ) +
-    ggplot2::scale_y_continuous(
-      labels = value_format,
-      sec.axis = ggplot2::dup_axis(
-        breaks = c(
-          param_table$value_lo[[2]],
-          param_table$value_hi[[2]]
-        ),
-        name = NULL
-      )
-    ) +
-    ggplot2::expand_limits(y = 0) +
-    ggplot2::labs(
-      x = "Financial Year of Admission",
-      y = y_title
-    ) +
-    ggplot2::theme(
-      panel.background = ggplot2::element_blank(),
-      axis.line = ggplot2::element_line(colour = "#2c2825"),
-      axis.ticks = ggplot2::element_line(colour = "#2c2825"),
-      axis.line.y.right = ggplot2::element_blank(),
-      axis.ticks.y.right = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(
-        colour = "#e8e9ea"
-      ),
-      panel.grid.minor.y = ggplot2::element_line(
-        colour = "#e8e9ea",
-        linetype = "dashed"
-      )
-    )
+    dplyr::mutate(
+      is_me = .data[["email"]] == .env[["email"]],
+      mean = (.data[["low_avg"]] + .data[["high_avg"]]) / 2 # This mean is just used for arranging the rows
+    ) |>
+    dplyr::arrange(.data[["mean"]]) |>
+    dplyr::mutate(
+      y = dplyr::row_number()
+    ) |>
+    dplyr::select(-y, -email, -timestamp, -strategy, -mean)
 }
 
 mitigator_results_plot <- function(data, values, email) {
   data |>
     dplyr::mutate(
       is_me = .data[["email"]] == .env[["email"]],
-      mean = (.data[["lo"]] + .data[["hi"]]) / 2
-    ) |>
-    dplyr::filter(
-      .data[["is_me"]] | !(
-        .data[["lo"]] == 0 & .data[["hi"]] == 100
-      )
+      mean = (.data[["low_avg"]] + .data[["high_avg"]]) / 2
     ) |>
     dplyr::arrange(.data[["mean"]]) |>
     dplyr::mutate(
@@ -108,31 +30,34 @@ mitigator_results_plot <- function(data, values, email) {
     ggplot2::geom_rect(
       xmin = values[[1]],
       xmax = values[[2]],
-      ymin = 0, ymax = nrow(data) + 1,
+      ymax = 0,
+      ymin = -(nrow(data) + 1),
       fill = "#fef2cd",
+      text = "hi",
       show.legend = FALSE
     ) +
     ggplot2::geom_vline(xintercept = values[[1]], colour = "#fcdf83") +
     ggplot2::geom_vline(xintercept = values[[2]], colour = "#fcdf83") +
     ggplot2::geom_point(
       ggplot2::aes(
-        x = .data[["lo"]],
-        text = .data[["comments_lo"]]
+        x = .data[["low_avg"]],
+        text = .data[["comments_low"]]
       ),
       size = 3,
       show.legend = FALSE
     ) +
     ggplot2::geom_point(
       ggplot2::aes(
-        x = .data[["hi"]],
-        text = .data[["comments_hi"]]
+        x = .data[["high_avg"]],
+        text = .data[["comments_high"]]
       ),
       size = 3,
       show.legend = FALSE
     ) +
     ggplot2::geom_segment(
       ggplot2::aes(
-        x = .data[["lo"]], xend = .data[["hi"]],
+        x = .data[["low_avg"]],
+        xend = .data[["high_avg"]],
         yend = .data[["y"]]
       ),
       lwd = 1.5,
@@ -147,5 +72,111 @@ mitigator_results_plot <- function(data, values, email) {
       axis.text.y = ggplot2::element_blank(),
       axis.ticks.y = ggplot2::element_blank(),
       axis.title = ggplot2::element_blank()
+    ) +
+    ggplot2::scale_y_reverse()
+}
+
+index_plot <- function(hist_data, disc_data, proj) {
+  df_all <- dplyr::bind_rows(
+    hist_data |>
+      dplyr::select(Year, Productivity_Index) |>
+      dplyr::mutate(Type = "Historical"),
+    disc_data |>
+      dplyr::select(Year, Productivity_Index) |>
+      dplyr::mutate(Type = "Estimate")
+  )
+
+  p <- ggplot2::ggplot(
+    df_all,
+    ggplot2::aes(Year, Productivity_Index, color = Type, linetype = Type)
+  ) +
+    ggplot2::geom_line(linewidth = 1) +
+    ggplot2::scale_color_manual(
+      values = c(Historical = "#444", Estimate = "purple")
+    ) +
+    ggplot2::scale_linetype_manual(
+      values = c(Historical = "solid", Estimate = "twodash")
+    ) +
+    ggplot2::theme_minimal() +
+    ggplot2::labs(
+      title = "Cumulative productivity growth (NQA) index (1995/96 = 100)",
+      x = "Financial Year",
+      y = "Index"
     )
+
+  dfp <- proj
+  lo <- hi <- numeric(nrow(dfp))
+  base <- tail(disc_data$Productivity_Index, 1)
+  for (i in seq_len(nrow(dfp))) {
+    lo[i] <- if (i == 1) {
+      base * (1 + dfp$Low[i] / 100)
+    } else {
+      lo[i - 1] * (1 + dfp$Low[i] / 100)
+    }
+    hi[i] <- if (i == 1) {
+      base * (1 + dfp$High[i] / 100)
+    } else {
+      hi[i - 1] * (1 + dfp$High[i] / 100)
+    }
+  }
+
+  df_r <- data.frame(Year = dfp$Year, lo, hi)
+  p <- p +
+    ggplot2::geom_ribbon(
+      data = df_r,
+      ggplot2::aes(x = Year, ymin = lo, ymax = hi),
+      inherit.aes = FALSE,
+      fill = "steelblue",
+      alpha = 0.2
+    )
+
+  plotly::ggplotly(p)
+}
+
+
+growth_plot <- function(hist_data, disc_data, proj, long_term_avg) {
+  df_bar <- dplyr::bind_rows(
+    hist_data |>
+      dplyr::filter(!is.na(Growth) & Year <= 2022) |>
+      dplyr::mutate(Type = "Historical"),
+    disc_data |>
+      dplyr::filter(Year %in% c(2023, 2024)) |>
+      dplyr::select(Year, Growth) |>
+      dplyr::mutate(Type = "Estimate")
+  )
+  p <- ggplot2::ggplot(df_bar, ggplot2::aes(Year, Growth, fill = Type)) +
+    ggplot2::geom_col(position = "identity", alpha = 0.8) +
+    ggplot2::geom_hline(
+      yintercept = long_term_avg,
+      linetype = "dotted",
+      color = "#333"
+    ) +
+    ggplot2::scale_fill_manual(
+      values = c(Historical = "gray70", Estimate = "tomato")
+    ) +
+    ggplot2::theme_minimal() +
+    ggplot2::labs(
+      title = "Year-on-year productivity growth (NQA)",
+      x = "Financial Year",
+      y = "Growth (%)"
+    )
+
+  dfp <- proj
+  p <- p +
+    ggplot2::geom_col(
+      data = dfp,
+      ggplot2::aes(x = Year - 0.2, y = Low),
+      width = 0.4,
+      fill = "forestgreen",
+      alpha = 0.7
+    ) +
+    ggplot2::geom_col(
+      data = dfp,
+      ggplot2::aes(x = Year + 0.2, y = High),
+      width = 0.4,
+      fill = "blue",
+      alpha = 0.7
+    )
+
+  plotly::ggplotly(p)
 }
